@@ -1,0 +1,187 @@
+---
+title: "Lab 3 analysis"
+output: html_document
+date: "2023-01-16"
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r}
+library(tidyverse)
+library(dplyr)
+library(lsr)
+library(ez)
+library(emmeans)
+library(car)
+library(kableExtra)
+```
+
+
+```{r}
+attention12 <- read.csv("Attention_check_1.csv") %>% select(Participant.Private.ID, Question.Key, Response) %>% filter(Question.Key== 'response-1'|
+                     Question.Key== 'response-2')
+attention13 <- read.csv("Attention_check.csv") %>% select(Participant.Private.ID, Question.Key, Response) %>% filter(Question.Key== 'response-1'|
+                     Question.Key== 'response-2')
+attention_check <- merge(attention12, attention13, by= c('Participant.Private.ID', 'Question.Key', 'Response'), all = TRUE) %>% filter(Response== 'Female')
+#exclude 7787693 (neighbour condition)
+
+
+demo12 <- read.csv("Demo 1.csv") %>% select(Participant.Private.ID, Question.Key, Response) %>% 
+  filter(Question.Key== 'response-2-1'|
+         Question.Key== 'response-2-2'|
+         Question.Key== 'response-2-3'|
+         Question.Key== 'response - age')
+demo13 <- read.csv("Demo.csv") %>% select(Participant.Private.ID, Question.Key, Response) %>%
+  filter(Question.Key == 'response-2-1'|
+         Question.Key == 'response-2-2'|
+         Question.Key == 'response-2-3'|
+         Question.Key== 'response - age')
+
+demo1 <- merge(demo12, demo13, by= c('Participant.Private.ID', 'Question.Key', 'Response'), all = TRUE) %>% filter(`Participant.Private.ID` != "7787693")
+demo_sum <- demo1 %>% group_by(Response) %>% count()
+#25 female, 32 male, 2 prefer not to say
+
+age<- demo1 %>% filter(Question.Key== 'response - age') %>% 
+  summarise(mean= mean(as.numeric(Response)), sd= sd(Response))
+#mean age= 20.46, sd age= 4.37, range 18-52
+```
+
+
+```{r}
+control12 <- read.csv("Control 1.csv")
+control13 <- read.csv("Control.csv")
+control1 <- merge(control12, control13,by= c('Participant.Private.ID', 'Zone.Type', 'Response'), all = TRUE) %>% select(Participant.Private.ID, Zone.Type, Response) %>% filter(Zone.Type == "response_slider_endValue") %>% mutate(metadata = "control")
+
+mother12 <- read.csv("Mother 1.csv") %>% select(Participant.Private.ID, Zone.Type, Response) 
+mother13 <- read.csv("Mother.csv") %>% select(Participant.Private.ID, Zone.Type, Response) 
+mother1 <- merge(mother12, mother13, by= c('Participant.Private.ID', 'Zone.Type', 'Response'), all = TRUE) %>% mutate(metadata = "mother") %>% filter(`Zone.Type` == "response_slider_endValue")
+
+
+neighbour12 <- read.csv("neighbour 1.csv") %>% 
+  select(Participant.Private.ID, Zone.Type, Response) 
+neighbour13 <-  read.csv("Neighbour.csv")%>% 
+  select(Participant.Private.ID, Zone.Type, Response) 
+neighbour1 <- merge(neighbour12, neighbour13, by= c('Participant.Private.ID', 'Zone.Type', 'Response'), all = TRUE) %>% mutate(metadata = "neighbour") %>% filter(`Zone.Type` == "response_slider_endValue")
+
+d_mother12 <- read.csv("Mother discredited 1.csv")%>% 
+  select(Participant.Private.ID, Zone.Type, Response) 
+d_mother13 <- read.csv("Mother discredited.csv") %>% 
+  select(Participant.Private.ID, Zone.Type, Response) 
+d_mother1 <- merge(d_mother12, d_mother13, by= c('Participant.Private.ID', 'Zone.Type', 'Response'), all = TRUE) %>% mutate(metadata = "discredited mother") %>% filter(`Zone.Type` == "response_slider_endValue")
+
+d_neighbour12 <- read.csv("Neighbour discredited 1.csv")%>% 
+  select(Participant.Private.ID, Zone.Type, Response) 
+d_neighbour13 <- read.csv("Neighbour discredited.csv")%>% 
+  select(Participant.Private.ID, Zone.Type, Response) 
+d_neighbour1 <- merge(d_neighbour12, d_neighbour13, by= c('Participant.Private.ID', 'Zone.Type', 'Response'), all = TRUE) %>% mutate(metadata = "discredited neighbour") %>% filter(`Zone.Type` == "response_slider_endValue")
+
+data <- rbind(mother1, d_mother1, neighbour1, d_neighbour1, control1) %>% filter(`Participant.Private.ID` != "7787693")
+```
+
+```{r}
+data1 <- rbind(mother1, d_mother1, neighbour1, d_neighbour1, control1)
+```
+
+```{r}
+data <- data %>% group_by(metadata) %>% filter('Participant.Private.ID'!= "7787693")
+
+ggplot(data, aes(x = metadata, y = Response, fill= metadata)) + 
+  geom_violin() +
+  geom_boxplot(width= 0.1) +
+  labs(x = "Condition", y = "Probability of Guity") +
+  theme_bw()
+```
+
+```{r}
+data <- data1  %>% select(Participant.Private.ID,Zone.Type,Response,metadata) %>% mutate(ID= Participant.Private.ID) %>% filter(ID != '7787693')
+data <- data %>% filter(metadata != 'control')
+data <- data %>% mutate(alibi = dplyr::recode(metadata,"discredited mother" = "0",
+                                       "discredited neighbour" = "0",
+                                       "mother" = "1",
+                                       "neighbour" = "1"))
+data <- data %>% mutate(relationship = dplyr::recode(metadata,
+                                       "discredited neighbour" = "neighbour",
+                                       "discredited mother" = "mother"))
+
+
+data <- data %>% select(ID, metadata, alibi, relationship, Response) 
+
+#normality
+shapiro.test(data %>% pull(Response))
+
+```
+
+```{r}
+anov <- ezANOVA(data = data, dv = Response, wid = ID,
+                 between = c(alibi, relationship), detailed = TRUE, return_aov = TRUE)
+anov
+
+plot(anov$aov)
+
+```
+
+```{r}
+#homogeneity of residuals
+lev <- lm(Response ~ alibi * relationship, data = data)
+leveneTest(lev)
+```
+```{r}
+summary <- data1 %>% group_by(metadata)  %>% summarise(mean=mean(Response),
+            sd = sd(Response),
+            se=sd/sqrt(n()), 
+            lowerCI=mean-(se*1.96), 
+            upperCI=mean+(se*1.96)) %>% rename(Condition= metadata)
+kable(summary) %>% kable_styling(full_width = NULL)
+```
+
+```{r}
+#check normality:
+shapiro.test(mother1 %>% pull(Response)
+shapiro.test(d_mother1 %>% pull(Response))
+shapiro.test(neighbour1 %>% pull(Response))
+shapiro.test(d_neighbour1 %>% pull(Response))
+#W = 0.69877, p-value = 0.0008512
+shapiro.test(control1 %>% pull(Response))
+
+```
+
+
+```{r}
+t.test(data %>% filter(metadata == "mother") %>% pull(Response), 
+       control1 %>% pull(Response))
+#t = -0.63315, df = 22.4, p-value = 0.533
+cohensD(data %>% filter(metadata == "mother") %>% pull(Response), 
+       control1 %>% pull(Response)) #d= .239
+
+t.test(data %>% filter(metadata == "discredited mother") %>% pull(Response), 
+       control1 %>% pull(Response))
+#t = 2.2072, df = 19.607, p-value = 0.0394 ***
+cohensD(data %>% filter(metadata == "discredited mother") %>% pull(Response), 
+       control1 %>% pull(Response))
+
+0t.test(data %>% filter(metadata == "neighbour") %>% pull(Response), 
+       control1 %>% pull(Response))
+#t = -1.7668, df = 25.993, p-value = 0.089
+cohensD(data %>% filter(metadata == "neighbour") %>% pull(Response), 
+       control1 %>% pull(Response))
+
+t.test(data %>% filter(metadata == "discredited neighbour") %>% pull(Response), 
+       control1 %>% pull(Response))
+#t = 0.81139, df = 17.501, p-value = 0.428
+cohensD(data %>% filter(metadata == "discredited neighbour") %>% pull(Response), 
+       control1 %>% pull(Response))
+
+wilcox.test(data %>% filter(metadata == "discredited neighbour") %>% pull(Response) ~ control1 %>% pull(Response) , data = data)
+```
+
+
+```{r}
+pairwise <- emmeans(anov$aov, pairwise ~ c(alibi, relationship), adjust="none")
+pairwise$contrasts
+#mother vs. mother discredited
+#neighbour vs. neighbour discredited
+#mother discredited vs. neighbour non-discredited
+```
+

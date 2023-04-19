@@ -1,0 +1,178 @@
+---
+title: "Lab 2"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r}
+library(tidyverse)
+library(broom)
+library(kableExtra)
+library(lsr)
+library(coin)
+library(tidyr)
+library(ez)
+library(emmeans)
+library(car)
+library(qqplotr)
+library(ggplot2)
+library(rstatix)
+```
+
+```{r}
+demo <- read.csv("demo.csv")
+dat <- read.csv("Spreadsheet- task.csv")
+demo <- demo %>% select(Participant.Private.ID, Question.Key, Response)
+dat <- dat %>% select(Participant.Private.ID, Trial.Number, Screen.Number, Screen.Name, Reaction.Time, Response, Incorrect, ANSWER, top.image, metadata)
+```
+
+```{r}
+demo <- demo %>%  filter(Question.Key== "response-2-2"|Question.Key== "response - age"|Question.Key== "response-3-2"|Question.Key== "response-4-2"|Question.Key== "response-5-2"|Question.Key== "response-2-3"|Question.Key== "response-2-1"|Question.Key== "response-3-other"|Question.Key== "response-4-1"|Question.Key== "response-5-1"|Question.Key== "response-3-1"|Question.Key== "response-3-3"|Question.Key== "response-3-text")
+
+demosum <- demo %>% group_by(Question.Key) %>% count(Response)
+# 21 male, 35 female, 2 prefer not to say
+# 4 with visual impairment, 1 with facial blindness and visual impairment- 5 excluded
+
+demo_excluded <- demo %>% 
+  filter(Participant.Private.ID!= "7532157") %>%
+  filter(Participant.Private.ID!= '7532159') %>%
+  filter(Participant.Private.ID!= '7537412') %>%
+  filter(Participant.Private.ID!= '7539874') %>%
+  filter(Participant.Private.ID!= '7541961')
+
+demosum2 <- demo_excluded %>% group_by(Question.Key) %>% count(Response)
+# 18 male, 33 female, 2 prefer not to say
+age <- demo_excluded %>% filter(Question.Key== "response - age")
+summary <- age %>% summarise(mean_age= mean(Response),
+                    sd_age= sd(Response),
+                    max= max(Response),
+                    min= min(Response))
+(18*12+19*20+20*8+21*3+22+26*2+27+30+42+49+52+54+71)/53
+#mean= 22.98, sd= 10.68, range 18-71
+# 21 white, 27 Asian, 3 Black, 2 other (1 mixed white and latino, 1 mixed asian and white)
+```
+
+```{r}
+dat <- dat %>% filter(Screen.Name== "Screen 2")
+dat_select <- dat %>% select(Participant.Private.ID, Incorrect, metadata)
+
+dat_sum <- dat_select %>% group_by(Participant.Private.ID, metadata) %>% summarise(score= 8- sum(Incorrect)) %>% mutate(metadata= dplyr::recode(metadata, 'unblur_no_mouth'='blur_mouth' )) %>% mutate(metadata= dplyr::recode(metadata, 'blur_with_mouth'='blur_rest' ))
+```
+
+```{r}
+dat_rename <- dat_sum %>% mutate(blur_mouth= dplyr::recode(metadata, 'blur'='Y_Y',
+                                              'blur_rest'='N_Y',
+                                              'blur_mouth'= 'Y_N',
+                                              'control'= 'N_N'))
+dat_separate <- dat_rename %>% separate(blur_mouth, c("blur_mouth", "blur_rest"), "_")
+```
+
+
+```{r}
+results<- ezANOVA(data= dat_separate,
+        dv= score, 
+        wid=Participant.Private.ID,
+        within=c(blur_mouth, blur_rest),
+        detailed= TRUE,
+        return_aov= TRUE)
+results
+shapiro_test(results$aov$`Participant.Private.ID:blur_mouth`$residuals)
+#0.09
+shapiro_test(results$aov$`Participant.Private.ID:blur_rest`$residuals)
+#0.40
+shapiro_test(results$aov$`Participant.Private.ID:blur_mouth:blur_rest`$residuals)
+#0.51
+```
+```{r}
+comparisons <- emmeans(results$aov, pairwise ~ c(blur, mouth), adjust="bonferroni")
+```
+
+```{r}
+comparisons <- aov(score ~ blur_mouth * blur_rest , data = dat_separate) 
+summary(comparisons)
+```
+
+
+```{r}
+TukeyHSD(comparisons, conf.level=.95)
+```
+
+```{r}
+ggplot(dat_sum, aes(group = metadata, x = metadata, y = score, colour= metadata)) + 
+  geom_violin()+
+    labs(x = "Condition", 
+       y = "Accuracy Score",
+       colour = "Condition", 
+       title = "Accuracy of Facial recognition depending on Condition") +
+  geom_boxplot(width = 0.1) +
+  theme_bw()
+```
+```{r}
+summary <- dat_sum %>% group_by(metadata) %>%
+  summarise(mean= mean(score)%>%round(2),
+            sd= sd(score)%>% round(2),
+            se= (sd(score)/sqrt(n()))%>% round(2)) %>% rename(Condition= metadata) 
+kable(summary) %>% 
+kable_styling(full_width = FALSE, position = "left") 
+```
+
+```{r}
+#homogeneity
+leveneTest(score ~ blur * mouth, dat_separate)
+```
+
+```{r}
+mod <- lm(score ~  blur*mouth, data= dat_separate)
+summary(mod)
+
+qqnorm(dat_separate %>% pull(score))+
+  qqline(dat_separate %>% pull(score))
+```
+
+```{r}
+#normality
+shapiro.test(dat_separate$score)
+
+dat_separate %>%
+  group_by(blur, mouth) %>%
+  identify_outliers(score) %>%
+  ungroup()
+```
+```{r}
+ggplot(dat_separate, aes(x= metadata, y= score))+
+  geom_jitter()
+```
+```{r}
+condition_sum <- dat_sum %>% group_by(metadata) %>% count()
+```
+
+```{r}
+dat_separate<-dat_separate%>%
+  mutate(ID=Participant.Private.ID)
+```
+
+
+```{r}
+dat_separate <- dat_separate %>% ungroup() %>%select (ID, metadata, score, blur, mouth)
+```
+
+
+```{r}
+#sphericity
+res <- anova_test(data = dat_separate, dv = score, wid =ID, within = c(blur, mouth),
+                  detailed= T)
+res
+```
+
+```{r}
+citation()
+RStudio.Version()
+
+```
+```{r}
+
+```
+

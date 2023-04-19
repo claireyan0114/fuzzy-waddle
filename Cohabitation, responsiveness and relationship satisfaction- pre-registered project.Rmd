@@ -1,0 +1,346 @@
+---
+title: "Does cohabitation and perceived responsiveness influence relationship satisfaction?"
+author: "CDLZ8"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## 1. Changes from pre-reg
+### Research Question
+There is a typo in pre-reg question. "respondsiveness" is corrected as "responsiveness".
+
+### Justification for research question
+None  
+
+### Hypotheses
+None  
+
+### Variables
+1. Induced "Marital status" variable in the exploratory analysis, which is measured by the fifth question in the survey (asks for relationship status). Marital status is computed by collapsing answers from "1" to "5" to level "Unmarried" and answer "6" to level" Married".
+
+### Analysis
+1. Results found participants who did not complete all the items measuring the same variable (e.g. perceived relationship satisfaction). These participants are removed from the analysis to avoid confounding average scores.
+
+2. The names of the variables are modified in the model formula to aid clarity (now: satisfaction_mean ~ cohabit_c * res_mean_c)
+
+3. Included numerical checks for model assumptions in addition to using plot() function;
+
+4. Neglected the outliers (plan not specified in pre-reg).
+
+### Descriptive statistics
+1. Created an additional column for each summary table to show percentage;
+
+2. NAs could not be removed in table1 because sd, se and CI could not be computed for a single participant (gender= Other);
+
+3. Additional summary analysis was conducted for cohabitation status;
+
+4. Added a facet-wrap plot to clarify data distribution for each cohabitation status;
+
+5. Cohabitation status is deviation coded in the scatter plot (this was not specified in pre-reg).
+
+## 2. Methods
+
+```{r}
+data_2023 <- read.csv('Coursework_final_Sep25.csv', stringsAsFactors = F)
+#### do not alter or rename this data file 
+
+## here we provide suggested libraries to use.
+library(tidyverse)
+library(broom)
+library(sjPlot)
+
+## additional libraries need to be justified
+library(kableExtra)
+# Kable() and kable_styling() functions within KableExtra are used to improve representation of the descriptive statistic table
+
+library(pwr)
+# use pwr.f2.test() function to conduct power analysis for the linear regression model
+
+library(car)
+#use leveneTest()- conducted Levene's test to test homogeneity of residuals in assumption check
+
+## do not include install code here
+
+```
+
+**1. Isolate the variables of interest** (cohabitation status, perceived partner responsiveness and relationship satisfaction) plus background variables (3 items for age, gender, race);  
+
+**2. Wrangle the numeric variables** (perceived partner responsiveness, relationship satisfaction) by taking mean score across items;  
+
+**3. Combine the data** and **Drop NAs** from variables;  
+
+**4.** Remove participants with imcomplete responses;  
+
+**5.** Create **deviation coding** for the categorical predictor (cohabitation status) and **mean center** the numerical predictor (perceived partner responsiveness).
+```{r}
+#Isolate the variables relevant to the study
+survey <- data_2023  %>% select(pID, cohabit, ppr1:ppr18, sat1, sat2,sat3, age, gender, gender_TEXT) 
+
+# create mean scores for perceived responsiveness
+responsiveness <- survey %>% dplyr::select(pID, ppr1:ppr18) %>%
+  pivot_longer(cols= -pID, names_to='item', values_to='score') %>% 
+  group_by(pID) %>%
+  summarise(responsiveness_mean=mean(score, na.rm=T))
+
+# create mean scores for relationship satisfaction
+satisfaction <- survey %>% dplyr::select(pID, sat1:sat3) %>%
+  pivot_longer(cols= -pID, names_to='item', values_to='score') %>%
+  group_by(pID) %>%
+  summarise(satisfaction_mean=mean(score, na.rm=T))
+
+#join mean responsiveness and mean satisfaction scores together with original data; 
+survey1 <- inner_join(survey, responsiveness, by='pID') %>%
+  inner_join(satisfaction, by = 'pID')
+
+#Examine missing values for cohabitation, perceived responsiveness and relationship satisfaction
+survey1 %>% pull(cohabit) %>% is.na() %>% sum() #no missing value
+
+NA_sat <- survey1 %>% select(pID, sat1:sat3) %>% 
+  pivot_longer(-pID, names_to = "item", values_to = 'score')%>%
+  filter(is.na(score)) %>%
+  group_by(pID) %>%
+  count() #566 participants did not complete all items
+
+NA_res <- survey1 %>% select(pID, ppr1:ppr18) %>% 
+  pivot_longer(-pID, names_to = "item", values_to = 'score')%>%
+  filter(is.na(score)) #2 participants with missing values; Participant ID 1812 is also found in NA_sat.
+                             
+# 567 people did not respond to at least one of the satisfaction items or the responsiveness values; there are no missing values for the cohabitation items.
+```
+
+
+```{r}
+#Participants who did not respond to all items of the target variables are removed (i.e. participants' responses for satisfaction are only analysed when all satisfaction items were answered).
+survey2 <- survey1 %>% drop_na(c(cohabit, ppr1:ppr18,sat1:sat3))
+
+#Creating deviation coding for cohabitation and mean centering responsiveness
+survey3 <- survey2 %>% 
+  mutate(cohabit_c=if_else(cohabit==1, 1, -1),
+        res_mean_c= responsiveness_mean-mean(responsiveness_mean)) %>%
+  mutate(cohabit_c= as.factor(cohabit_c))
+```
+
+## 3. Results
+### DESCRIPTIVE STATS
+
+Table1 reports mean/sd/95% confidence interval for age, perceived partner responsiveness and relationship satisfaction. 
+
+There are 609 respondants in total, of which 357 (58.6%) are female, 251(41.2%) are male and 1 (0.2%) other gender.
+
+There are 490 (80.4%) participants cohabiting with their partners and 119 (19.5%) currently not.
+```{r}
+#Participants are grouped by gender and cohabitation status. 
+table1 <- survey3 %>% group_by(gender, cohabit) %>%
+  summarise(n=n(),
+            age=mean(age, na.rm=T) %>% round(2),
+            Responsiveness=mean(responsiveness_mean)%>% round(2),
+            sd_res= sd(responsiveness_mean) %>% round(2),
+            se_res= (sd_res/sqrt(n()))%>% round(2),
+            upperCI_res= (Responsiveness + 1.96*se_res)%>% round(2),
+            lowerCI_res= (Responsiveness- 1.96*se_res) %>% round(2),
+            Satisfaction=mean(satisfaction_mean) %>% round(2),
+            sd_sat=sd(satisfaction_mean)%>% round(2),
+            se_sat= (sd_sat/sqrt(n())) %>% round(2),
+            upperCI_sat= (Satisfaction+ 1.96*se_sat) %>% round(2),
+            lowerCI_sat= (Satisfaction- 1.96*se_sat) %>% round(2)) %>%
+  mutate (cohabit= dplyr::recode(cohabit, '1'='Yes', '0'='No'),
+         gender=dplyr::recode(gender, '0'='Female', '1'='Male', '99'= 'Other' ))
+
+kable(table1) %>% kable_styling()
+
+#Cohabitation numbers and proportions
+cohabitation <- table1 %>% group_by(cohabit) %>% summarise(total= sum(n))
+cohabitation <- cohabitation %>% ungroup() %>% mutate(propoation= total/ sum(total))
+
+#Gender numbers and proportions
+gender <- table1 %>% group_by(gender) %>% summarise(total= sum(n))
+gender <- gender %>% ungroup() %>% mutate(propoation= total/ sum(total))
+kable(gender) %>% kable_styling()
+```
+
+Table 2 presents the relationship status of participants, split by cohabitation status. 
+Results how that the majority of cohabiting couples are married (53%), and most of the couples who are not living together are exclusively dating.
+```{r}
+status <- data_2023 %>% select(pID, relstat, cohabit) %>% drop_na(relstat, cohabit) %>% rename(status=relstat) 
+table2 <- status %>% group_by(status, cohabit) %>%
+  summarise(n=n()) %>%
+  mutate (status= dplyr::recode(status, '1'='Single', '2'='Dating', '3'='Exclusive', '4'='Common-law', '5' ='Engaged', '6'= 'Married'),
+         cohabit= dplyr::recode(cohabit, '1'='Yes', '0'='No')) %>%
+  ungroup() %>%
+  mutate(proportion= (n/sum(n)) %>% round(3))
+kable(table2) %>% kable_styling()
+```
+
+The scatter plot presents the linear relationship in the model. There is positive association between perceived partner responsiveness and relationship satisfaction. In general, relationship satisfaction is higher for partners who live together. 
+
+There also seems to be an weak interaction between cohabitation status and persived responsiveness.
+```{r}
+plot <- survey3 %>% rename(cohabitation= cohabit_c)
+ggplot(plot, aes(x= res_mean_c, y= satisfaction_mean, colour= cohabitation))+
+  geom_jitter(alpha=.6)+
+  geom_smooth(method = lm)+
+  labs(x="Perceived Partner Responsiveness",
+       y = "Relationship Satisfaction",
+       title = "The Relationship Between Perceived Responsiveness and Relationship Satisfaction Split by Cohabitation Status") +
+  scale_colour_manual( labels =c('Yes', 'No'), 
+                      values= c("indianred2","skyblue2"))+
+  theme_bw()
+
+#Another plot to aid clarity- the relationship between perceived responsiveness and relationship satisfaction split by cohabitation status
+ggplot(plot, aes(x= res_mean_c, y= satisfaction_mean))+
+  geom_jitter()+
+  facet_wrap(~cohabitation)+
+   labs(x="Perceived Partner Responsiveness",
+       y = "Relationship Satisfaction")+
+  theme_bw()
+  
+```
+
+### INFERENTIAL STATS
+
+The general linear model included **relationship satisfaction** as the dependent variable and **perceived partner responsiveness (centred)** and **cohabitation status** as the independent variables. 
+
+Cohabitation status was deviation coded with "Yes" as "1" and "No" as "-1".  
+
+**Assumptions checked against including:**  
+1. normality (both dependent variable and the residuals);    
+2. homogeneity of variance;  
+3. linear relationship between predictor and outcome;  
+4. influential outliers.
+```{r}
+#Check normality assumption on the dependent variable
+shapiro.test(survey3 %>% pull(satisfaction_mean))
+#Shapiro test yields significance, which indicates a violation of the normaliy assumption
+
+# Recode cohabit_c to aid interpretation
+survey4 <- survey3 %>% mutate(cohabit_c= dplyr::recode(cohabit_c, "1"="Yes", "-1"="No"))
+```
+
+```{r}
+#Run the linear model (including interaction term)
+mod <- lm(satisfaction_mean ~ cohabit_c * res_mean_c, data= survey4)
+summary(mod)
+```
+
+**Write up:**
+A linear regression model was conducted to examine the effects of perceived partner responsiveness on relationship satisfaction and whether this effect depends on partners' cohabitation status (Yes/No).  
+
+The model containing a continuous measure of perceived responsiveness and a categorical measure of cohabitation, and their interaction, was significantly better than the null model (F(3,605)= 273.5, p < .001). Adjusted R-squared shows that the model explains 57.4% of the variance in the relationship satisfaction scores. Average relationship satisfaction across cohabitation status is estimated to be 5.65 for a mean level of perceived responsiveness.
+
+The model contains a significant main effect of perceived partner responsiveness on relationship satisfaction (b= 0.65, SE= 0.049, T= 13.3, p < .001). Therefore null hypothesis for H1 could be rejected. This suggests an increase in relationship satisfaction when perceived partner responsiveness increased. A significant main effect of cohabitation status was not found (b= 0.11, SE= 0.090, T= 1.27, p = .21), therefore cannot reject null hypothesis for H2. Additionally, there was no significant interaction between the two predictors (b= -0.070, SE= 0.054, T= -1.29, p= .20), which provide insufficient evidence to reject null hypothesis for H3.This means that the effect of perceived responsiveness on relationship satisfaction is not greater for couples who live together compared to those living apart
+
+**Assumptions are further checked using plot()**
+Plots show a slight deviation from normality and homogeneity
+```{r}
+plot(mod)
+# Linear relationship (between numerical predictor and the dependent variable) is checked by looking at the Residual vs Fitted plot. The red line is horizontal, which shows linear residuals.
+
+#Datapoints in the Q-Q plot shows slight deviation from the straight line, which raises concern about whether residuals are normally distributed.
+
+#The scale vs location graph shows a curved line and unevenly spread datapoints, indicating a potential violation to the homogeneity of variance (especially important for our case because of unequal sample size for each group);
+
+#Residuals vs Leverage plot shows 3 potential outliers (496, 245, 35) with high Cook's distance score. However, because all datapoints are inside the Cook's distance lines, these outliers are consider not influential and therefore not excluded in the current analysis.
+```
+
+Re-testing problematic assumptions (normality of residuals and homogeneity of variance) using numerical method
+```{r}
+#Augment model data to contain useful metrics
+mod.metrics <- augment(mod)
+
+#Conduct Shapiro-Wilk test of normality
+shapiro.test(mod.metrics$.resid)
+#Shapiro Test yields significance (p <.001), therefore normality of residuals are violated;
+
+#Conduct Levene's test of homogeneity
+leveneTest(.resid ~ cohabit_c, data=mod.metrics)
+#Levene's test is non-significant (p = .80), therefore homogeneity of variance is not violated.
+
+#Identify influential points by examining cook's distance values greater than 3x the mean
+cooksD <- cooks.distance(mod)
+influential <- cooksD[(cooksD > (3 * mean(cooksD, na.rm = TRUE)))]
+influential
+```
+
+A post-hoc power analysis is conducted to estimate the power of the linear model analysis
+```{r}
+pwr.f2.test(u= 3, v= 605, f2= 0.5735/(1-0.5735), sig.level= 0.05)
+#retrospective power (1.0) is extremely large
+```
+
+[EXPLORATORY ANALYSES - OPTIONAL, RESULTING FROM DEVIATIONS FROM PRE-REG, MUST BE IDENTIFIED AS EXPLORATORY]
+
+Explore whether adding **relationship status** in the model can better predict relationship satisfaction.
+
+The new model is compared with the existing model. Results shows **no evidence** that the new model is a better fit for the data.  
+
+```{r}
+#Create a dataframe containing relationship status and other key variables
+survey5 <- data_2023 %>% select(pID, relstat) %>% drop_na(relstat) 
+survey5 <- inner_join(survey5, survey4, by="pID") %>%
+  mutate(relstat= as.factor(relstat))
+
+#Perform linear regression model with relationship status, perceived responsiveness, and cohabitation status as predictors (including the interaction between ppr and cohabitation).
+mod1 <- lm(satisfaction_mean ~ relstat + cohabit_c * res_mean_c, data= survey5)
+summary(mod1)
+
+#comparing the new model with the existing model
+anova(mod, mod1)
+# Non-significant result (p= .18). mod 1 is not a significant improvement on mod (i.e. additional variance explained by the extra parameter is not worth the decrease in the degrees of freedom)
+```
+
+Majority of participants are married in the analysis. In concern for the model's validity, an additional test is conducted on the **association between marital status** and **relationship satisfaction**. 
+
+The model does not provide a significantly better fit than the null model (F(1, 607)= 1.336, p = .25) and the variance explained is extremely low (Adjusted R-squared= 0.0006). However, relationship status 3 (b= 0.51, SE= 0.22, T= 2.37, p= .02), 5 (b= 0.59, SE= 0.27, T= 2.22, p= .03) and 6 (b= 0.47, SE= 0.22, T= 2.10, p= .04) were found to be significant influencing factors of relationship satisfaction.
+
+Marital status was not a significant predictor of relationship satisfaction (b= -0.126, SE= 0.109, T= -1.16, p= 0.248). Therefore, being married does not predict a higher perceived relationship satisfaction.
+```{r}
+#Colapse relationship status to create marital status with two levels (Married vs. Unmarried):
+survey6 <- survey5 %>% mutate(marriage= if_else(relstat=="6", "Married", "Unmarried"))
+
+#Perform a linear regression model with marital status predicting relationship satisfaction.
+mod2 <- lm(satisfaction_mean ~ marriage, data= survey6)
+summary(mod2)
+```
+
+## 4. Discussion
+
+We hypothesised that perceived partner responsiveness (ppr) would be a significant positive predictor of relationship satisfaction. This is supported by our analysis, which shows increase in relationship satisfaction when ppr increase. However, there was no enough evidence to reject the null hypothesis for H2 and H3. Linear regression found no significant association between cohabitation status (Yes/No) on relationship satisfaction. There was also no interaction between ppr and cohabitation status.  
+
+Previous studies have established the positive relationship between perceived responsiveness from partner and relationship satisfaction. For example, Champagne and Muise (2021) showsthat people with Parkinson's Disease consider their relationship as significantly more satisfied when their partner is perceived as more responsive. Our analysis converge with previous studies by yielding a positive relationship between ppr and satisfaction using a large sample (N= 609). The large sample size suggests that the results are likely to be generalised to a wider population. Based on previous literature (Laurenceau et al., 1998), we propose that this positive influence of perceived responsiveness on relationship satisfaction could be mediated by an increased feeling of intimacy. Therefore, future research may consider including intimacy measure in regression models to further investigate the interactions between ppr and intimacy.
+
+The current analysis did not support previous findings on cohabitation increasing relationship satisfaction (e.g.Bar-Kalifa et al., 2015). Tai et al. (2014) found significantly higher relationship satisfaction ratings for couples planning to marry or live together. However, our model suggests no such association. This may be due to the limitation in our design. We used an unbalanced sample for cohabitation status (80.4% participants were living with their romantic partner). Additionally, normality assumption was found to be violated in our regression model. Finally, there were several outliers found to be potentially influential which were not excluded from the analysis. These flaws in design may have undermined the power to detect a true effect of cohabitation status.
+
+Furthermore, marital status could be a potential confound when investigating the relationship between cohabitation and perceived relationship satisfaction. This was demonstrated by Tai et al. (2014), who found an influence of marital statu on relationship satisfaction, with married couple significantly more satisfied than the others. In their study, cohabitors were strictly differentiated from married couples. However, such distinction was not made in our study (See table2).  
+
+Concerned about the effect of having a large number of married respondents (53.2%), we conducted an exploratory analysis to investigate how adding relationship status as a predictor would affect our model. The new model did not provide a significantly better fit and was no improvement compared to the existing model. However, status 3 (dating exclusively), 5 (Engaged) and 6 (Married) were found to be significantly positively related to higher satisfaction. Additional regression analysis on marital status did not find a significant positive association between being married and being more satisfied with the relationship. This led us to conclude a possibility that relationship satisfaction may not be boosted by marriage only, but by any relationship status with high levels of intimacy and commitment. Although the power of this finding could also have been undermined by the uneven sample size for each relationship status. Future research could further explore the interaction between relationship status and perceived relationship satisfaction.
+
+One novelty of our study is the investigation of how the interaction between ppr and cohabitation status affects relationship satisfaction. This effect was not found in our regression model. We previously hypothesised that the positive effect of ppr may be more profound for couples who live together compared to those living apart, because of an increased need of communication under the same household. However, this prediction lacks evidence. It is possible that couples who are living apart requires their partner to be more responsive in order to gain a sense of support (Laurenceau et al., 1998). This interaction needs to be explored in more details using different measures (e.g. qualitative interview).
+
+Lastly, we conducted a post-hoc power analysis to examine the statistical power of the regression analysis. Retrospective power was found to be extremely large. However, this needs to be interpreted with caution. It is well documented that post-hoc power analyses fail to produce the true power of  detecting significance (Zhang et al., 2019), but are merely a reflection of the p-values (Ford, 2021). Therefore, it is suggested that future research conduct power analysis prior to statistical analysis in order to be informed on the proper sample size to use and the effect sizes to expect.
+
+The current study contribute to the understanding of the influencing factors of relationship satisfaction. It can be implied from our findings that self and partner disclosure and responsiveness is crucial for maintaining a satisfying relationship.
+
+
+## 5. References
+
+Bar-Kalifa, E., Hen-Weissberg, A., & Rafaeli, E. (2015). Perceived Partner Responsiveness Mediates the Association Between Social Anxiety and Relationship Satisfaction in Committed Couples. Journal of Social and Clinical Psychology, 34(7), 587–610. https://doi.org/10.1521/jscp.2015.34.7.587 
+
+Champagne, E. R., & Muise, A. (2021). Responsiveness and Relationship Satisfaction in Couples Coping With Parkinson’s Disease: A Pilot Study. Psychological Reports, 125(2), 804–821. https://doi.org/10.1177/0033294121998032 
+
+Fletcher, G. J. O., Simpson, J. A., & Thomas, G. (2000). The Measurement of Perceived Relationship Quality Components: A Confirmatory Factor Analytic Approach. Personality and Social Psychology Bulletin, 26(3), 340–354. https://doi.org/10.1177/0146167200265007 
+
+Ford, C. (2021, August 4). Post Hoc Power Calculations are Not Useful. University of Virginia Library Research Data Services + Sciences. https://data.library.virginia.edu/post-hoc-power-calculations-are-not-useful/ 
+
+Laurenceau, J. P., Barrett, L. F., & Pietromonaco, P. R. (1998). Intimacy as an interpersonal process: The importance of self-disclosure, partner disclosure, and perceived partner responsiveness in interpersonal exchanges. Journal of Personality and Social Psychology, 74(5), 1238–1251. https://doi.org/10.1037/0022-3514.74.5.1238 
+
+Reis, H. T., Crasta, D., Rogge, R. D., Maniaci, M. R., & Carmichael, C. L. (2017). Perceived Partner Responsiveness Scale (PPRS). The Sourcebook of Listening Research, 516–521. https://doi.org/10.1002/9781119102991.ch57 
+
+Rusbult, C. E., Martz, J. M., & Agnew, C. R. (1998). The Investment Model Scale: Measuring commitment level, satisfaction level, quality of alternatives, and investment size. Personal Relationships, 5(4), 357–387. https://doi.org/10.1111/j.1475-6811.1998.tb00177.x 
+
+Tai, T. O., Baxter, J., & Hewitt, B. (2014). Do co-residence and intentions make a difference? Relationship satisfaction in married, cohabiting, and living apart together couples in four countries. Demographic Research, 31, 71–104. https://doi.org/10.4054/demres.2014.31.3 
+
+Zhang, Y., Hedo, R., Rivera, A., Rull, R., Richardson, S., & Tu, X. M. (2019). Post hoc power analysis: is it an informative and meaningful analysis? General Psychiatry, 32(4), e100069. https://doi.org/10.1136/gpsych-2019-100069
+
